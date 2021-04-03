@@ -8,11 +8,12 @@ import osr
 from flask import current_app
 
 
-TEMP_FLD = os.path.join(current_app.instance_path, os.path.normpath("processing/temp"))
-OUT_FLD_WGS = os.path.join(current_app.instance_path, os.path.normpath('data/aviable_cloud_masks/WGS84'))
-OUT_FLD = os.path.join(current_app.instance_path, os.path.normpath('data/aviable_cloud_masks/project'))
+TEMP_FLD = os.path.normpath("./processing/temp")
+OUT_FLD_WGS = os.path.normpath('./data/aviable_cloud_masks/WGS84')
+OUT_FLD = os.path.normpath('./data/aviable_cloud_masks/project')
+IMG_FLD = os.path.normpath('./data/aviable_images') # relative from main.py
 
-current_app.logger.info(TEMP_FLD)
+#current_app.logger.info(TEMP_FLD)
 
 def s2to_numpy_stack(in_fld: str,
                    out_resolution=60,
@@ -26,43 +27,49 @@ def s2to_numpy_stack(in_fld: str,
     :temp_fld: temp folder for resample images
     '''
 
-
-    opts = gdal.WarpOptions(xRes=out_resolution, yRes=out_resolution)
+    opts = gdal.WarpOptions(
+        xRes=out_resolution,
+        yRes=out_resolution,
+        #outputType=gdal.GDT_Int16
+    )
     outArray = None
 
     # order 3 rd dimension
     order = ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B10", "B11", "B12"]
 
-    filenames = [filename for filename in glob.glob(os.path.join(in_fld, r"\**\IMG_DATA\*B*.jp2"), recursive=True)]
+    filenames = list(glob.glob(os.path.join(IMG_FLD, in_fld, r"GRANULE\**\IMG_DATA\*B*.jp2")))
+
     # get order index based on position in order list from filename
     filenames.sort(key=lambda x: order.index(x.split('_')[-1][:3]))
 
     for filename in filenames:
         print(filename)
         ds = gdal.Open(filename)
+        band = ds.GetRasterBand(1)
         if ds.GetGeoTransform()[1] != out_resolution:
             print(ds.GetGeoTransform()[1])
-            ds = None
             tempRaster = os.path.join(temp_fld, "tempRaster.tif")
             gdal.Warp(tempRaster, filename, options=opts)
-            ds = gdal.Open(tempRaster)
-            normalizedArray = (ds.ReadAsArray() /
-                               ds.GetRasterBand(1).GetStatistics(True, True)[1])
+            dsTemp = gdal.Open(tempRaster)
+            # print(np.max(dsTemp.ReadAsArray()))
+            # IMPORTANT division by 10000 is necessary for normalize data
+            normalizedArray = dsTemp.ReadAsArray() / 10000.0
             if outArray is None:
                 outArray = normalizedArray
             else:
                 outArray = np.dstack([outArray, normalizedArray])
-            ds = None
-            os.remove(tempRaster)
+            dsTemp = None
+            # os.remove(tempRaster)
             continue
         else:
-            normalizedArray = (ds.ReadAsArray() /
-                               ds.GetRasterBand(1).GetStatistics(True, True)[1])
+            normalizedArray = band.ReadAsArray() / 10000.0
             if outArray is None:
                 outArray = normalizedArray
             else:
                 outArray = np.dstack([outArray, normalizedArray])
-                ds = None
+        ds = None
+        band = None
+        dsTemp = None
     return outArray
 
 
@@ -80,43 +87,47 @@ def make_and_write_predict(inArray: np.array,
     sr = osr.SpatialReference()
     sr.ImportFromEPSG(WKID)
     ds: gdal.Dataset = gdal.Open(templateRasterPath)
-    output_raster = (gdal.GetDriverByName('GTiff').Create(f'../scratch/{outPredictRaster}',
-                                                          cloud_masks[0].shape[0],
-                                                          cloud_masks[0].shape[0],
-                                                          1,
-                                                          gdal.GDT_Float32))
+    driver = gdal.GetDriverByName('GTiff')
+    output_raster = driver.Create(
+        outPredictRaster,
+        cloud_masks[0].shape[0],
+        cloud_masks[0].shape[0],
+        1,
+        gdal.GDT_Byte
+    )
     output_raster.SetGeoTransform(ds.GetGeoTransform())
     output_raster.SetProjection(sr.ExportToWkt())
     output_raster.GetRasterBand(1).WriteArray(cloud_masks[0])
+    output_raster.GetRasterBand(1).SetNoDataValue(0)
     output_raster.FlushCache()
     del output_raster
     ds = None
 
 
+def polygonize_raster(inRaster, outGeoJSON: str, WKID: int):
+    #sourceRaster = gdal.Open(inRaster, gdal.GA_Update)
+    #band = sourceRaster.GetRasterBand(1)
+    #band.SetNoDataValue(0.0)  # For polygonize only clouds
+    #sourceRaster.GetRasterBand(1).
+    #sourceRaster = None
 
-def polygonize_raster(inRaster, outFolder: str, outGeoJSON: str):
-    outShapefile = os.path.basename(inRaster).split(".tif")[0]
-    out = os.path.join(outFolder, outGeoJSON)
-    if os.path.exists(out):
-        return
-        # driver.DeleteDataSource(outShapefile)
-    sourceRaster = gdal.Open(inRaster, gdal.GA_Update)
+    sourceRaster = gdal.Open(inRaster)
+    band = sourceRaster.GetRasterBand(1)
 
-    band = sourceRaster.GetRasterBand(1)
-    band.SetNoDataValue(0.0)  # For polygonize only clouds
-    band = sourceRaster.GetRasterBand(1)
+    sr = osr.SpatialReference()
+    sr.ImportFromEPSG(WKID)
 
     driver = ogr.GetDriverByName("GeoJSON")
-    if os.path.exists(out):
-        driver.DeleteDataSource(outShapefile)
-    outDatasource = driver.CreateDataSource(out)
-    outLayer = outDatasource.CreateLayer(out, srs=None)
-    gdal.Polygonize(band, None, outLayer, -1, [], callback=None)
-    # gdal.Polygonize(band, None, outLayer, 0, [], callback=None )
+    if os.path.exists(outGeoJSON):
+        driver.DeleteDataSource(outGeoJSON)
+    outDatasource = driver.CreateDataSource(outGeoJSON)
+    outLayer = outDatasource.CreateLayer("mask", srs=sr)
+    gdal.Polygonize(band, band, outLayer, -1, [], callback=None)
     outDatasource.Destroy()
-    inRaster = None
+    sourceRaster = None
 
-def reproject_geojson(inSrc, outSrc, inWKID:int):
+
+def reproject_geojson(inSrc, outSrc, inWKID: int):
 
     driver = ogr.GetDriverByName("GeoJSON")
 
@@ -136,11 +147,10 @@ def reproject_geojson(inSrc, outSrc, inWKID:int):
     inLayer = inDataSet.GetLayer()
 
     # create the output layer
-    output = outSrc
-    if os.path.exists(output):
-        driver.DeleteDataSource(output)
-    outDataSet = driver.CreateDataSource(output)
-    outLayer = outDataSet.CreateLayer("mask", geom_type=ogr.wkbMultiPolygon)
+    if os.path.exists(outSrc):
+        driver.DeleteDataSource(outSrc)
+    outDataSet = driver.CreateDataSource(outSrc)
+    outLayer = outDataSet.CreateLayer("test", geom_type=ogr.wkbMultiPolygon, srs=outSpatialRef)
 
     # add fields
     inLayerDefn = inLayer.GetLayerDefn()
@@ -161,6 +171,9 @@ def reproject_geojson(inSrc, outSrc, inWKID:int):
         # create a new feature
         outFeature = ogr.Feature(outLayerDefn)
         # set the geometry and attribute
+
+        # TODO in out layer flipped x and y temporary manually change order by SWAP
+        geom.SwapXY()
         outFeature.SetGeometry(geom)
         for i in range(0, outLayerDefn.GetFieldCount()):
             outFeature.SetField(outLayerDefn.GetFieldDefn(i).GetNameRef(), inFeature.GetField(i))
@@ -172,6 +185,7 @@ def reproject_geojson(inSrc, outSrc, inWKID:int):
 
     # Save and close the shapefiles
     inDataSet = None
+    outDataSet = None
 
 def get_wkid_from_fld(inFldPath:str)-> int:
     fldName = os.path.basename(inFldPath)
@@ -179,21 +193,21 @@ def get_wkid_from_fld(inFldPath:str)-> int:
     return 32600 + int(tileID[1:3])
 
 def process_pipeline(inFld):
+    # current_app.logger.info("Converting")
     inFldName = os.path.basename(inFld)
-    array_to_predict = s2to_numpy_stack(in_fld=inFld)
+    #array_to_predict = s2to_numpy_stack(in_fld=inFld)
 
-    current_app.logger.info("Processing")
+    # current_app.logger.info("Predicting cloud")
     WKID = get_wkid_from_fld(inFld)
-    template = [filename for filename in glob.glob(
-        os.path.join(inFld, r"\**\IMG_DATA\*B11.jp2"), recursive=True
-    )][0]
+    # # raster with 60 resolution
+    #template = list(glob.glob(os.path.join(IMG_FLD, inFld, r"GRANULE\**\IMG_DATA\*B*.jp2")))[0]
     outRaster = os.path.join(TEMP_FLD, 'tempRaster.tif')
-    make_and_write_predict(array_to_predict, outRaster, WKID=WKID, templateRasterPath=template)
+    #make_and_write_predict(array_to_predict, outRaster, WKID=WKID, templateRasterPath=template)
 
-    current_app.logger.info("Processing1")
-    outJSON = os.pah.join(OUT_FLD, f'{inFldName}.geojson')
-    polygonize_raster(outRaster, TEMP_FLD, outJSON)
+    # current_app.logger.info("Polygonize")
+    outJSON = os.path.join(OUT_FLD, f'{inFldName}.geojson')
+    polygonize_raster(outRaster, outJSON, WKID=WKID)
 
-    current_app.logger.info("Processing2")
-    outJSON_WGS = os.pah.join(OUT_FLD_WGS, f'{inFldName}.geojson')
+    current_app.logger.info("Projecting")
+    outJSON_WGS = os.path.join(OUT_FLD_WGS, f'{inFldName}.geojson')
     reproject_geojson(outJSON, outJSON_WGS, inWKID=WKID)
