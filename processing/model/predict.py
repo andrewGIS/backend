@@ -1,6 +1,10 @@
 from typing import List
-
+import glob
+import datetime
 from flask import jsonify
+from tensorflow import keras
+#from osgeo import gdal_array
+from skimage import io
 
 import gdal
 import os
@@ -18,6 +22,9 @@ from ..utils import (
 
 TEMP_WARP_FLD = os.path.normpath("./processing/temp/warp")
 TEMP_STACK_FLD = os.path.normpath("./processing/temp/stack")
+TEMP_TILES_FLD = os.path.normpath("./processing/temp/tiles")
+TEMP_PREDICT_FLD = os.path.normpath("./processing/temp/predicts")
+STATIC_FLD = os.path.normpath("./static")
 IMG_FLD = os.path.normpath('./data/aviable_images')  # relative from main.py
 
 
@@ -38,9 +45,9 @@ def stack_layers(sampleFld: str, oldList: List, newList: List, outFld: str, outN
 
     #sample_raster = oldList[0]
     # if resolution 60
-    #sample_raster = get_raster_path(sampleFld, "B01", IMG_FLD)
+    sample_raster = get_raster_path(sampleFld, "B01", IMG_FLD)
     # if resolution 20
-    sample_raster = get_raster_path(sampleFld, "B05", IMG_FLD)
+    # sample_raster = get_raster_path(sampleFld, "B05", IMG_FLD)
 
     x_ncells, y_ncells = get_raster_size(sample_raster)
     cellsize = get_raster_resolution(sample_raster)
@@ -90,6 +97,111 @@ def stack_layers(sampleFld: str, oldList: List, newList: List, outFld: str, outN
     return output_tiff
 
 
+def raster2tile(inRaster, outFolder, tileSize=512):
+    """
+    Split raster to chunks (512 to 512)
+    """
+    import subprocess
+
+    print(" ".join([
+        '"venv/Scripts/python"',
+        '"venv/Scripts/gdal_retile.py"',
+        f' -ps {tileSize} {tileSize}',
+        f' -targetDir "{os.path.normpath(outFolder)}"',
+        f' "{os.path.normpath(inRaster)}"'
+    ]))
+
+    width = 5490
+    height = 5490
+    tilesize = 256
+
+
+    for i in range(0, width, tilesize):
+        for j in range(0, height, tilesize):
+
+            opts = gdal.TranslateOptions(
+                format="GTiff",
+                srcWin=[i, j, tilesize, tilesize],
+            )
+
+            gdal.Translate(os.path.join(outFolder, f"tile_{i}_{j}.tif"), inRaster, options=opts)
+
+
+def merge_tiles(inFld, outFile):
+    """
+    Merge all predicted tiles to one file
+    :param inFld: folder with predicted tiles
+    :param outFile: merged geotiff file with extension
+    :return:
+    """
+    lsTfs = glob.glob(f'{inFld}/*.tif')
+
+    bltOpts = gdal.BuildVRTOptions()
+    ds = gdal.BuildVRT('mosaic.vrt', lsTfs, options=bltOpts)
+
+    outDs = gdal.GetDriverByName("GTiff").Create(
+        outFile,
+        ds.RasterXSize,
+        ds.RasterYSize,
+        1,
+        gdal.GDT_Float32
+    )
+
+    outDs.GetRasterBand(1).WriteArray(ds.ReadAsArray().astype(np.float32))
+    srsSpRef = ds.GetSpatialRef()
+
+    outDs.SetProjection(srsSpRef.ExportToWkt())
+    outDs.SetGeoTransform(ds.GetGeoTransform())
+
+    ds = None
+    outDs = None
+
+
+def predict_folder(
+        model_path='./files/winterBackboneFirstTest.h5',
+        inFld='../../ds/ds_validation_256_256_26/L1C_T40VEM_A024828_20200324T073608_L1C_T40VEM_A014132_20191120T074121/',
+        outFld='/home/andrew.tarasov1993.gmail.com/outs/geoRefPredict'
+               '/L1C_T40VEM_A024828_20200324T073608_L1C_T40VEM_A014132_20191120T074121'
+):
+    model = keras.models.load_model(model_path, compile=False)
+
+    print(datetime.datetime.now())
+    for img in os.listdir(inFld):
+        # print (img)
+
+        if img.endswith('.tif'):
+            inImg = os.path.join(inFld, img)
+            outTile = os.path.join(outFld, img)
+            tileSize = 256
+
+            #rasterArray = gdal_array.LoadFile(np.array(inImg))
+            rasterArray = np.array(io.imread(inImg)/65536)
+            #print(rasterArray.shape)
+            if rasterArray.shape[0] != 256 or rasterArray.shape[1] != 256:
+                # print (f"{img} - incorrect shape")
+                rasterArray = None
+                continue
+
+            # print(inImg)
+            # srcDs = gdal.Open(inImg)
+
+            testPrediction = model.predict(np.array([rasterArray]))
+
+            srcDs = gdal.Open(inImg)
+            driver = gdal.GetDriverByName("GTiff")
+            srsSpRef = srcDs.GetSpatialRef()
+
+            dstDs = driver.Create(outTile, tileSize, tileSize, 1, gdal.GDT_Float32)
+            dstDs.SetProjection(srsSpRef.ExportToWkt())
+            dstDs.SetGeoTransform(srcDs.GetGeoTransform())
+
+            dstDs.GetRasterBand(1).WriteArray(testPrediction[0][:, :, 0].astype(np.float32))
+            # dstDs.FlushCache()
+            dstDs = None
+            src = None
+    print(datetime.datetime.now())
+
+
 def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_STACK_FLD, resolution=20):
 
         # s2 bands
@@ -107,19 +219,33 @@ def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_
 
         print("Stacking")
         outStack = os.path.join(stackFolder, f'{oldImg}_{newImg}.tif')
-        if os.path.exists(outStack):
-            return jsonify({'status':"already created"})
+        if not os.path.exists(outStack):
+            #return jsonify({'status':"already created"})
+            outStack = stack_layers(
+                sampleFld=oldImg,
+                oldList=checkedRastersOld,
+                newList=checkedRastersNew,
+                outFld=TEMP_STACK_FLD,
+                outName=f'{oldImg}_{newImg}.tif'
+            )
 
+        #return jsonify({'status': "created"})
 
-        outStack = stack_layers(
-            sampleFld=oldImg,
-            oldList=checkedRastersOld,
-            newList=checkedRastersNew,
-            outFld=TEMP_STACK_FLD,
-            outName=f'{oldImg}_{newImg}.tif'
-        )
+        rasterName = os.path.basename(outStack).split('.tif')[0]
+        tilesFolderPath = os.path.join(TEMP_TILES_FLD, rasterName)
 
-        return jsonify({'status': "created"})
+        print("Tiling")
+        if not os.path.exists(tilesFolderPath):
+            os.mkdir(tilesFolderPath)
+            raster2tile(outStack, tilesFolderPath, 256)
 
-        # print("Tiling")
-        # raster2tile(outStack,outTileFld,tileSize=[224,224])
+        print("Predict")
+        model = os.path.join(STATIC_FLD, "AllMyUnet_36.h5")
+        outPredictPath = os.path.join(TEMP_PREDICT_FLD, rasterName)
+        if not os.path.exists(outPredictPath):
+            os.mkdir(outPredictPath)
+            predict_folder(model, tilesFolderPath, outPredictPath)
+
+        print("Merge predict")
+        outRaster = os.path.join(TEMP_PREDICT_FLD, rasterName + '.tif')
+        merge_tiles(outPredictPath, outRaster)
