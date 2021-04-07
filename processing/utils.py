@@ -52,7 +52,7 @@ def get_raster_path(imgFld,
     """
 
     findString = os.path.normpath(f'''{allImgFld}//{imgFld}//**//*{channelTemplate}.jp2''')
-    print(findString)
+    #print(findString)
     findResults = glob.glob(findString, recursive=True)
 
     if len(findResults) != 1:
@@ -110,8 +110,9 @@ def resample_raster(inRaster, outRaster, outResolution):
     Resample raster to other spatial resolution
     """
     warpOptions = gdal.WarpOptions(xRes=outResolution, yRes=outResolution)
-    # if os.path.exists(outRaster):
-    #     return outRaster
+    # TODO check that resolution are equals in other case delete wrapped layer
+    if os.path.exists(outRaster):
+        return outRaster
     gdal.Warp(outRaster, inRaster, options=warpOptions)
 
     return outRaster

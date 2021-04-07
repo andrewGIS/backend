@@ -1,14 +1,19 @@
+import osr
 from typing import List
 import glob
 import datetime
 from flask import jsonify
 from tensorflow import keras
-#from osgeo import gdal_array
+# from osgeo import gdal_array
 from skimage import io
+import subprocess
+import ogr
 
 import gdal
 import os
 import numpy as np
+
+from ..clouds.make_cloud_mask import process_pipeline
 
 from ..utils import (
     get_raster_size,
@@ -31,6 +36,8 @@ STATIC_FLD = os.path.normpath("./static")
 IMG_FLD = os.path.normpath('./data/aviable_images')  # relative from main.py
 OUT_PATH = os.path.normpath('./data/aviable_predicts/project')
 OUT_PATH_WGS = os.path.normpath('./data/aviable_predicts/WGS84')
+OUT_CLOUD_FLD = os.path.normpath('./data/aviable_cloud_masks/project')
+OUT_FILTERED = os.path.normpath('./data/aviable_predicts/filtered')
 
 
 def stack_layers(sampleFld: str,
@@ -56,7 +63,7 @@ def stack_layers(sampleFld: str,
     :return:
     """
 
-    #sample_raster = oldList[0]
+    # sample_raster = oldList[0]
     if res == 60:
         sample_raster = get_raster_path(sampleFld, "B01", IMG_FLD)
     if res == 20:
@@ -93,17 +100,17 @@ def stack_layers(sampleFld: str,
     # writing original data
     # indexes of new channel in out raster
     for oldRaster, newRaster, idxs in zip(oldList, newList, idx_map):
-        #new_idx, old_idx, dif1_idx, dif2_idx = idxs
+        # new_idx, old_idx, dif1_idx, dif2_idx = idxs
         new_idx, old_idx = idxs
         old = gdal.Open(oldRaster).ReadAsArray()
         new = gdal.Open(newRaster).ReadAsArray()
-        #dif1 = new - old
-        #dif2 = old - new
+        # dif1 = new - old
+        # dif2 = old - new
 
         out_source.GetRasterBand(old_idx).WriteArray(old)
         out_source.GetRasterBand(new_idx).WriteArray(new)
-        #out_source.GetRasterBand(dif1_idx).WriteArray(dif1)
-        #out_source.GetRasterBand(dif2_idx).WriteArray(dif2)
+        # out_source.GetRasterBand(dif1_idx).WriteArray(dif1)
+        # out_source.GetRasterBand(dif2_idx).WriteArray(dif2)
 
         old = None
         new = None
@@ -117,15 +124,6 @@ def raster2tile(inRaster, outFolder, tileSize=256, res: int = 10):
     """
     Split raster to chunks (512 to 512)
     """
-    import subprocess
-
-    print(" ".join([
-        '"venv/Scripts/python"',
-        '"venv/Scripts/gdal_retile.py"',
-        f' -ps {tileSize} {tileSize}',
-        f' -targetDir "{os.path.normpath(outFolder)}"',
-        f' "{os.path.normpath(inRaster)}"'
-    ]))
 
     if res == 10:
         width = 10980
@@ -141,7 +139,6 @@ def raster2tile(inRaster, outFolder, tileSize=256, res: int = 10):
 
     for i in range(0, width, tileSize):
         for j in range(0, height, tileSize):
-
             opts = gdal.TranslateOptions(
                 format="GTiff",
                 srcWin=[i, j, tileSize, tileSize],
@@ -205,9 +202,9 @@ def predict_folder(
             outTile = os.path.join(outFld, img)
             tileSize = 256
 
-            #rasterArray = gdal_array.LoadFile(np.array(inImg))
+            # rasterArray = gdal_array.LoadFile(np.array(inImg))
 
-            arr = io.imread(inImg)/65536
+            arr = io.imread(inImg) / 65536
             # print(rasterArray.shape)
             # if rasterArray.shape[0] != 256 or rasterArray.shape[1] != 256:
             #     # print (f"{img} - incorrect shape")
@@ -262,58 +259,105 @@ def predict_folder(
             src = None
     print(datetime.datetime.now())
 
+def erase(in_layer, erase_layers: List, out_ds, WKID):
+
+    #TODO optimizsing process
+
+    srcDs = ogr.Open(in_layer)
+    srcLayer = srcDs.GetLayer()
+    inSpatialRef = osr.SpatialReference()
+    inSpatialRef.ImportFromEPSG(WKID)
+    outSpatialRef = osr.SpatialReference()
+    outSpatialRef.ImportFromEPSG(4326)
+    coordTrans = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
+    outDriver = ogr.GetDriverByName('GeoJSON')
+    if os.path.exists(out_ds):
+        outDriver.DeleteDataSource(out_ds)
+    outDataSource = outDriver.CreateDataSource(out_ds)
+    outLayer: ogr.Layer = outDataSource.CreateLayer('predict', geom_type=ogr.wkbMultiPolygon, srs=outSpatialRef)
+
+    for feature in srcLayer:
+        feature_out: ogr.Feature = ogr.Feature(outLayer.GetLayerDefn())
+        feature_out.SetGeometry(feature.GetGeometryRef())
+        for erase_layer in erase_layers:
+            erDs = ogr.Open(erase_layer)
+            eLayer = erDs.GetLayer()
+            for f1 in eLayer:
+                eraseGeom = f1.GetGeometryRef()
+                erased: ogr.Geometry = feature_out.GetGeometryRef().Difference(eraseGeom)
+                feature_out.SetGeometry(erased)
+            erDs = None
+            eLayer = None
+        feature_out.GetGeometryRef().Transform(coordTrans)
+        feature_out.GetGeometryRef().SwapXY()
+        if feature_out.GetGeometryRef().IsEmpty():
+            feature_out.Destroy()
+            continue
+        outLayer.CreateFeature(feature_out)
+        feature_out.Destroy()
+
+    outDataSource.Destroy()
+    srcDs = None
 
 def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_STACK_FLD, resolution=10):
+    # s2 bands
+    # ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B10","B11","B12"]
 
-        # s2 bands
-        # ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B10","B11","B12"]
+    featuresOld = get_bands(oldImg, ["B04", "B08", "B11", "B12"],
+                            imgFolder=IMG_FLD)
 
-        featuresOld = get_bands(oldImg, ["B04", "B08", "B11", "B12"],
-                               imgFolder=IMG_FLD)
+    featuresNew = get_bands(newImg, ["B04", "B08", "B11", "B12"],
+                            imgFolder=IMG_FLD)
+    # print (featuresOld,'\n',featuresNew)
+    print("Resolution checking")
+    checkedRastersOld = check_rasters_list(featuresOld, resolution, warpFolder)
+    checkedRastersNew = check_rasters_list(featuresNew, resolution, warpFolder)
 
-        featuresNew = get_bands(newImg, ["B04", "B08", "B11", "B12"],
-                               imgFolder=IMG_FLD)
-        # print (featuresOld,'\n',featuresNew)
-        print("Resolution checking")
-        checkedRastersOld = check_rasters_list(featuresOld, resolution, warpFolder)
-        checkedRastersNew = check_rasters_list(featuresNew, resolution, warpFolder)
+    print("Stacking")
+    outStack = os.path.join(stackFolder, f'{oldImg}_{newImg}.tif')
+    if not os.path.exists(outStack):
+        outStack = stack_layers(sampleFld=oldImg, oldList=checkedRastersOld, newList=checkedRastersNew,
+                                outFld=TEMP_STACK_FLD, outName=f'{oldImg}_{newImg}.tif', res=resolution)
 
-        print("Stacking")
-        outStack = os.path.join(stackFolder, f'{oldImg}_{newImg}.tif')
-        if not os.path.exists(outStack):
-            #return jsonify({'status':"already created"})
-            outStack = stack_layers(sampleFld=oldImg, oldList=checkedRastersOld, newList=checkedRastersNew,
-                                    outFld=TEMP_STACK_FLD, outName=f'{oldImg}_{newImg}.tif', res=resolution)
+    rasterName = os.path.basename(outStack).split('.tif')[0]
+    tilesFolderPath = os.path.join(TEMP_TILES_FLD, rasterName)
 
-        #return jsonify({'status': "created"})
+    print("Tiling")
+    if not os.path.exists(tilesFolderPath):
+        os.mkdir(tilesFolderPath)
+        raster2tile(outStack, tilesFolderPath, 256, res=resolution)
 
-        rasterName = os.path.basename(outStack).split('.tif')[0]
-        tilesFolderPath = os.path.join(TEMP_TILES_FLD, rasterName)
+    print("Predict")
+    model = os.path.join(STATIC_FLD, "AllMyUnet_36.h5")
+    outPredictPath = os.path.join(TEMP_PREDICT_FLD, rasterName)
+    if not os.path.exists(outPredictPath):
+        os.mkdir(outPredictPath)
+        predict_folder(model, tilesFolderPath, outPredictPath)
 
-        print("Tiling")
-        if not os.path.exists(tilesFolderPath):
-            os.mkdir(tilesFolderPath)
-            raster2tile(outStack, tilesFolderPath, 256, res=resolution)
+    print("Merge predict")
+    outRaster = os.path.join(TEMP_PREDICT_FLD, rasterName + '.tif')
+    if not os.path.exists(outRaster):
+        merge_tiles(outPredictPath, outRaster)
 
-        print("Predict")
-        model = os.path.join(STATIC_FLD, "AllMyUnet_36.h5")
-        outPredictPath = os.path.join(TEMP_PREDICT_FLD, rasterName)
-        if not os.path.exists(outPredictPath):
-            os.mkdir(outPredictPath)
-            predict_folder(model, tilesFolderPath, outPredictPath)
+    print("Polygomize predict")
+    WKID = get_wkid_from_fld(oldImg)
+    outJSON = os.path.join(OUT_PATH, rasterName + '.geojson')
+    if not os.path.exists(outJSON):
+        polygonize_raster(outRaster, outJSON, WKID)
 
-        print("Merge predict")
-        outRaster = os.path.join(TEMP_PREDICT_FLD, rasterName + '.tif')
-        if not os.path.exists(outRaster):
-            merge_tiles(outPredictPath, outRaster)
+    print("Project predict")
+    outJSON_WGS = os.path.join(OUT_PATH_WGS, rasterName + '.geojson')
+    if not os.path.exists(outJSON_WGS):
+        reproject_geojson(outJSON, outJSON_WGS, WKID)
 
-        print("Polygomize predict")
-        WKID = get_wkid_from_fld(oldImg)
-        outJSON = os.path.join(OUT_PATH, rasterName + '.geojson')
-        if not os.path.exists(outJSON):
-            polygonize_raster(outRaster, outJSON, WKID)
+    print("Cloud filtering")
+    oldImgMask = os.path.join(OUT_CLOUD_FLD, oldImg + '.geojson')
+    if not os.path.exists(oldImgMask):
+        process_pipeline(oldImg)
 
-        print("Project predict")
-        outJSON_WGS = os.path.join(OUT_PATH_WGS, rasterName + '.geojson')
-        if not os.path.exists(outJSON_WGS):
-            reproject_geojson(outJSON, outJSON_WGS, WKID)
+    newImgMask = os.path.join(OUT_CLOUD_FLD, newImg + '.geojson')
+    if not os.path.exists(newImgMask):
+        process_pipeline(newImg)
+
+    outFilteredJSON = os.path.join(OUT_FILTERED, rasterName + '.geojson')
+    erase(outJSON, [oldImgMask, newImgMask], outFilteredJSON, WKID)

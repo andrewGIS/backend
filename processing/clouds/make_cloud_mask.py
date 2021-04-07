@@ -107,19 +107,19 @@ def make_and_write_predict(inArray: np.array,
 def process_pipeline(inFld):
     # current_app.logger.info("Converting")
     inFldName = os.path.basename(inFld)
-    #array_to_predict = s2to_numpy_stack(in_fld=inFld)
+    array_to_predict = s2to_numpy_stack(in_fld=inFld)
 
-    # current_app.logger.info("Predicting cloud")
+    print("Predicting cloud")
     WKID = get_wkid_from_fld(inFld)
     # # raster with 60 resolution
-    #template = list(glob.glob(os.path.join(IMG_FLD, inFld, r"GRANULE\**\IMG_DATA\*B*.jp2")))[0]
+    template = list(glob.glob(os.path.join(IMG_FLD, inFld, r"GRANULE\**\IMG_DATA\*B01.jp2")))[0]
     outRaster = os.path.join(TEMP_FLD, 'tempRaster.tif')
-    #make_and_write_predict(array_to_predict, outRaster, WKID=WKID, templateRasterPath=template)
+    make_and_write_predict(array_to_predict, outRaster, WKID=WKID, templateRasterPath=template)
 
-    # current_app.logger.info("Polygonize")
+    print("Polygonize")
     outJSON = os.path.join(OUT_FLD, f'{inFldName}.geojson')
     polygonize_raster(outRaster, outJSON, WKID=WKID)
 
-    current_app.logger.info("Projecting")
+    print("Projecting")
     outJSON_WGS = os.path.join(OUT_FLD_WGS, f'{inFldName}.geojson')
     reproject_geojson(outJSON, outJSON_WGS, inWKID=WKID)
