@@ -110,8 +110,8 @@ def resample_raster(inRaster, outRaster, outResolution):
     Resample raster to other spatial resolution
     """
     warpOptions = gdal.WarpOptions(xRes=outResolution, yRes=outResolution)
-    if os.path.exists(outRaster):
-        return outRaster
+    # if os.path.exists(outRaster):
+    #     return outRaster
     gdal.Warp(outRaster, inRaster, options=warpOptions)
 
     return outRaster

@@ -76,33 +76,34 @@ def stack_layers(sampleFld: str,
         output_tiff,
         x_ncells,
         y_ncells,
-        features_count,
+        8,
         gdal.GDT_UInt16
     )
     out_source.SetGeoTransform((x_min, cellsize, 0, y_max, 0, -cellsize))
     out_source.SetProjection(get_raster_projection(newList[0]))
 
     idx_map = [
-        [1, 3, 5, 6],  # B04
+        [1, 2],  # B04
         # [new channel index, old channel index, new - old dif index, old - new dif index]
-        [2, 4, 7, 8],  # B08
-        [13, 14, 15, 16],  # B11
-        [9, 10, 11, 12]  # B12
+        [3, 4],  # B08
+        [5, 6],  # B11
+        [7, 8]  # B12
     ]
 
     # writing original data
     # indexes of new channel in out raster
     for oldRaster, newRaster, idxs in zip(oldList, newList, idx_map):
-        new_idx, old_idx, dif1_idx, dif2_idx = idxs
+        #new_idx, old_idx, dif1_idx, dif2_idx = idxs
+        new_idx, old_idx = idxs
         old = gdal.Open(oldRaster).ReadAsArray()
         new = gdal.Open(newRaster).ReadAsArray()
-        dif1 = new - old
-        dif2 = old - new
+        #dif1 = new - old
+        #dif2 = old - new
 
         out_source.GetRasterBand(old_idx).WriteArray(old)
         out_source.GetRasterBand(new_idx).WriteArray(new)
-        out_source.GetRasterBand(dif1_idx).WriteArray(dif1)
-        out_source.GetRasterBand(dif2_idx).WriteArray(dif2)
+        #out_source.GetRasterBand(dif1_idx).WriteArray(dif1)
+        #out_source.GetRasterBand(dif2_idx).WriteArray(dif2)
 
         old = None
         new = None
@@ -112,7 +113,7 @@ def stack_layers(sampleFld: str,
     return output_tiff
 
 
-def raster2tile(inRaster, outFolder, tileSize=256):
+def raster2tile(inRaster, outFolder, tileSize=256, res: int = 10):
     """
     Split raster to chunks (512 to 512)
     """
@@ -126,9 +127,17 @@ def raster2tile(inRaster, outFolder, tileSize=256):
         f' "{os.path.normpath(inRaster)}"'
     ]))
 
-    #TODO make dependent from resolution
-    width = 10980
-    height = 10980
+    if res == 10:
+        width = 10980
+        height = 10980
+
+    if res == 20:
+        width = 5490
+        height = 5490
+
+    if res == 60:
+        width = 1830
+        height = 1830
 
     for i in range(0, width, tileSize):
         for j in range(0, height, tileSize):
@@ -192,8 +201,9 @@ def predict_folder(
             tileSize = 256
 
             #rasterArray = gdal_array.LoadFile(np.array(inImg))
-            rasterArray = np.array(io.imread(inImg)/65536)
-            #print(rasterArray.shape)
+
+            arr = io.imread(inImg)/65536
+            # print(rasterArray.shape)
             # if rasterArray.shape[0] != 256 or rasterArray.shape[1] != 256:
             #     # print (f"{img} - incorrect shape")
             #     rasterArray = None
@@ -202,7 +212,36 @@ def predict_folder(
             # print(inImg)
             # srcDs = gdal.Open(inImg)
 
-            testPrediction = model.predict(np.array([rasterArray]))
+            b4new = arr[:, :, 0]
+            b4old = arr[:, :, 1]
+            b8new = arr[:, :, 2]
+            b8old = arr[:, :, 3]
+            b11new = arr[:, :, 4]
+            b11old = arr[:, :, 5]
+            b12new = arr[:, :, 6]
+            b12old = arr[:, :, 7]
+
+            toPredict = np.array(
+                np.dstack([
+                    b4new,
+                    b8new,
+                    b4old,
+                    b8old,
+                    b4new - b4old,
+                    b4old - b4new,
+                    b8new - b8old,
+                    b8old - b8new,
+                    b12new,
+                    b12old,
+                    b12new - b12old,
+                    b12old - b12new,
+                    b11new,
+                    b11old,
+                    b11new - b11old,
+                    b11old - b11new,
+                ]).astype('float32'))
+
+            testPrediction = model.predict(np.array([toPredict]))
 
             srcDs = gdal.Open(inImg)
             driver = gdal.GetDriverByName("GTiff")
@@ -249,7 +288,7 @@ def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_
         print("Tiling")
         if not os.path.exists(tilesFolderPath):
             os.mkdir(tilesFolderPath)
-            raster2tile(outStack, tilesFolderPath, 256)
+            raster2tile(outStack, tilesFolderPath, 256, res=resolution)
 
         print("Predict")
         model = os.path.join(STATIC_FLD, "AllMyUnet_36.h5")
