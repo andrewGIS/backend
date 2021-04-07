@@ -2,11 +2,11 @@ import numpy as np
 import gdal
 import os
 import glob
-import ogr
 import osr
 
 from flask import current_app
 
+from processing.utils import polygonize_raster, reproject_geojson, get_wkid_from_fld
 
 TEMP_FLD = os.path.normpath("./processing/temp")
 OUT_FLD_WGS = os.path.normpath('./data/aviable_cloud_masks/WGS84')
@@ -103,94 +103,6 @@ def make_and_write_predict(inArray: np.array,
     del output_raster
     ds = None
 
-
-def polygonize_raster(inRaster, outGeoJSON: str, WKID: int):
-    #sourceRaster = gdal.Open(inRaster, gdal.GA_Update)
-    #band = sourceRaster.GetRasterBand(1)
-    #band.SetNoDataValue(0.0)  # For polygonize only clouds
-    #sourceRaster.GetRasterBand(1).
-    #sourceRaster = None
-
-    sourceRaster = gdal.Open(inRaster)
-    band = sourceRaster.GetRasterBand(1)
-
-    sr = osr.SpatialReference()
-    sr.ImportFromEPSG(WKID)
-
-    driver = ogr.GetDriverByName("GeoJSON")
-    if os.path.exists(outGeoJSON):
-        driver.DeleteDataSource(outGeoJSON)
-    outDatasource = driver.CreateDataSource(outGeoJSON)
-    outLayer = outDatasource.CreateLayer("mask", srs=sr)
-    gdal.Polygonize(band, band, outLayer, -1, [], callback=None)
-    outDatasource.Destroy()
-    sourceRaster = None
-
-
-def reproject_geojson(inSrc, outSrc, inWKID: int):
-
-    driver = ogr.GetDriverByName("GeoJSON")
-
-    # input SpatialReference
-    inSpatialRef = osr.SpatialReference()
-    inSpatialRef.ImportFromEPSG(inWKID)
-
-    # output SpatialReference
-    outSpatialRef = osr.SpatialReference()
-    outSpatialRef.ImportFromEPSG(4326)
-
-    # create the CoordinateTransformation
-    coordTrans = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
-
-    # get the input layer
-    inDataSet = driver.Open(inSrc)
-    inLayer = inDataSet.GetLayer()
-
-    # create the output layer
-    if os.path.exists(outSrc):
-        driver.DeleteDataSource(outSrc)
-    outDataSet = driver.CreateDataSource(outSrc)
-    outLayer = outDataSet.CreateLayer("test", geom_type=ogr.wkbMultiPolygon, srs=outSpatialRef)
-
-    # add fields
-    inLayerDefn = inLayer.GetLayerDefn()
-    for i in range(0, inLayerDefn.GetFieldCount()):
-        fieldDefn = inLayerDefn.GetFieldDefn(i)
-        outLayer.CreateField(fieldDefn)
-
-    # get the output layer's feature definition
-    outLayerDefn = outLayer.GetLayerDefn()
-
-    # loop through the input features
-    inFeature = inLayer.GetNextFeature()
-    while inFeature:
-        # get the input geometry
-        geom = inFeature.GetGeometryRef()
-        # reproject the geometry
-        geom.Transform(coordTrans)
-        # create a new feature
-        outFeature = ogr.Feature(outLayerDefn)
-        # set the geometry and attribute
-
-        # TODO in out layer flipped x and y temporary manually change order by SWAP
-        geom.SwapXY()
-        outFeature.SetGeometry(geom)
-        for i in range(0, outLayerDefn.GetFieldCount()):
-            outFeature.SetField(outLayerDefn.GetFieldDefn(i).GetNameRef(), inFeature.GetField(i))
-        # add the feature to the shapefile
-        outLayer.CreateFeature(outFeature)
-        # dereference the features and get the next input feature
-        outFeature = None
-        inFeature = inLayer.GetNextFeature()
-
-    # Save and close the shapefiles
-    inDataSet = None
-    outDataSet = None
-
-def get_wkid_from_fld(inFldPath:str)-> int:
-    fldName = os.path.basename(inFldPath)
-    tileID = fldName.split('_')[5]
-    return 32600 + int(tileID[1:3])
 
 def process_pipeline(inFld):
     # current_app.logger.info("Converting")

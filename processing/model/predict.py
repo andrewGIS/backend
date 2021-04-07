@@ -17,7 +17,10 @@ from ..utils import (
     get_raster_projection,
     get_bands,
     check_rasters_list,
-    get_raster_path
+    get_raster_path,
+    polygonize_raster,
+    reproject_geojson,
+    get_wkid_from_fld
 )
 
 TEMP_WARP_FLD = os.path.normpath("./processing/temp/warp")
@@ -26,13 +29,23 @@ TEMP_TILES_FLD = os.path.normpath("./processing/temp/tiles")
 TEMP_PREDICT_FLD = os.path.normpath("./processing/temp/predicts")
 STATIC_FLD = os.path.normpath("./static")
 IMG_FLD = os.path.normpath('./data/aviable_images')  # relative from main.py
+OUT_PATH = os.path.normpath('./data/aviable_predicts/project')
+OUT_PATH_WGS = os.path.normpath('./data/aviable_predicts/WGS84')
 
 
-def stack_layers(sampleFld: str, oldList: List, newList: List, outFld: str, outName: str, features_count: int = 16):
+def stack_layers(sampleFld: str,
+                 oldList: List,
+                 newList: List,
+                 outFld: str,
+                 outName: str,
+                 features_count: int = 16,
+                 res: int = 20
+                 ):
     """
     Stack layers in one raster (now of the same resolution)
     and calculate difference
 
+    :param res: spatial resolution
     :param sampleFld:str folder with original images (old or new) used for get information about raster
     :param oldList: band list from first image expected in order B04, B08, B11, B12
     :param newList: band list from first image expected in order B04, B08, B11, B12
@@ -44,10 +57,12 @@ def stack_layers(sampleFld: str, oldList: List, newList: List, outFld: str, outN
     """
 
     #sample_raster = oldList[0]
-    # if resolution 60
-    sample_raster = get_raster_path(sampleFld, "B01", IMG_FLD)
-    # if resolution 20
-    # sample_raster = get_raster_path(sampleFld, "B05", IMG_FLD)
+    if res == 60:
+        sample_raster = get_raster_path(sampleFld, "B01", IMG_FLD)
+    if res == 20:
+        sample_raster = get_raster_path(sampleFld, "B05", IMG_FLD)
+    if res == 10:
+        sample_raster = get_raster_path(sampleFld, "B04", IMG_FLD)
 
     x_ncells, y_ncells = get_raster_size(sample_raster)
     cellsize = get_raster_resolution(sample_raster)
@@ -78,7 +93,7 @@ def stack_layers(sampleFld: str, oldList: List, newList: List, outFld: str, outN
     # writing original data
     # indexes of new channel in out raster
     for oldRaster, newRaster, idxs in zip(oldList, newList, idx_map):
-        old_idx, new_idx, dif1_idx, dif2_idx = idxs
+        new_idx, old_idx, dif1_idx, dif2_idx = idxs
         old = gdal.Open(oldRaster).ReadAsArray()
         new = gdal.Open(newRaster).ReadAsArray()
         dif1 = new - old
@@ -97,7 +112,7 @@ def stack_layers(sampleFld: str, oldList: List, newList: List, outFld: str, outN
     return output_tiff
 
 
-def raster2tile(inRaster, outFolder, tileSize=512):
+def raster2tile(inRaster, outFolder, tileSize=256):
     """
     Split raster to chunks (512 to 512)
     """
@@ -111,17 +126,16 @@ def raster2tile(inRaster, outFolder, tileSize=512):
         f' "{os.path.normpath(inRaster)}"'
     ]))
 
-    width = 5490
-    height = 5490
-    tilesize = 256
+    #TODO make dependent from resolution
+    width = 10980
+    height = 10980
 
-
-    for i in range(0, width, tilesize):
-        for j in range(0, height, tilesize):
+    for i in range(0, width, tileSize):
+        for j in range(0, height, tileSize):
 
             opts = gdal.TranslateOptions(
                 format="GTiff",
-                srcWin=[i, j, tilesize, tilesize],
+                srcWin=[i, j, tileSize, tileSize],
             )
 
             gdal.Translate(os.path.join(outFolder, f"tile_{i}_{j}.tif"), inRaster, options=opts)
@@ -134,7 +148,7 @@ def merge_tiles(inFld, outFile):
     :param outFile: merged geotiff file with extension
     :return:
     """
-    lsTfs = glob.glob(f'{inFld}/*.tif')
+    lsTfs = list(glob.glob(f'{inFld}/*.tif'))
 
     bltOpts = gdal.BuildVRTOptions()
     ds = gdal.BuildVRT('mosaic.vrt', lsTfs, options=bltOpts)
@@ -155,6 +169,9 @@ def merge_tiles(inFld, outFile):
 
     ds = None
     outDs = None
+
+    if os.path.exists('mosaic.vrt'):
+        os.remove('mosaic.vrt')
 
 
 def predict_folder(
@@ -177,10 +194,10 @@ def predict_folder(
             #rasterArray = gdal_array.LoadFile(np.array(inImg))
             rasterArray = np.array(io.imread(inImg)/65536)
             #print(rasterArray.shape)
-            if rasterArray.shape[0] != 256 or rasterArray.shape[1] != 256:
-                # print (f"{img} - incorrect shape")
-                rasterArray = None
-                continue
+            # if rasterArray.shape[0] != 256 or rasterArray.shape[1] != 256:
+            #     # print (f"{img} - incorrect shape")
+            #     rasterArray = None
+            #     continue
 
             # print(inImg)
             # srcDs = gdal.Open(inImg)
@@ -202,7 +219,7 @@ def predict_folder(
     print(datetime.datetime.now())
 
 
-def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_STACK_FLD, resolution=20):
+def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_STACK_FLD, resolution=10):
 
         # s2 bands
         # ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B10","B11","B12"]
@@ -221,13 +238,8 @@ def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_
         outStack = os.path.join(stackFolder, f'{oldImg}_{newImg}.tif')
         if not os.path.exists(outStack):
             #return jsonify({'status':"already created"})
-            outStack = stack_layers(
-                sampleFld=oldImg,
-                oldList=checkedRastersOld,
-                newList=checkedRastersNew,
-                outFld=TEMP_STACK_FLD,
-                outName=f'{oldImg}_{newImg}.tif'
-            )
+            outStack = stack_layers(sampleFld=oldImg, oldList=checkedRastersOld, newList=checkedRastersNew,
+                                    outFld=TEMP_STACK_FLD, outName=f'{oldImg}_{newImg}.tif', res=resolution)
 
         #return jsonify({'status': "created"})
 
@@ -248,4 +260,16 @@ def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_
 
         print("Merge predict")
         outRaster = os.path.join(TEMP_PREDICT_FLD, rasterName + '.tif')
-        merge_tiles(outPredictPath, outRaster)
+        if not os.path.exists(outRaster):
+            merge_tiles(outPredictPath, outRaster)
+
+        print("Polygomize predict")
+        WKID = get_wkid_from_fld(oldImg)
+        outJSON = os.path.join(OUT_PATH, rasterName + '.geojson')
+        if not os.path.exists(outJSON):
+            polygonize_raster(outRaster, outJSON, WKID, False)
+
+        print("Project predict")
+        outJSON_WGS = os.path.join(OUT_PATH_WGS, rasterName + '.geojson')
+        if not os.path.exists(outJSON_WGS):
+            reproject_geojson(outJSON, outJSON_WGS, WKID)
