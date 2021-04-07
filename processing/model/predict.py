@@ -170,7 +170,12 @@ def merge_tiles(inFld, outFile):
         gdal.GDT_Float32
     )
 
-    outDs.GetRasterBand(1).WriteArray(ds.ReadAsArray().astype(np.float32))
+    predict_limit = 0.1
+    rawArray = ds.ReadAsArray().astype(np.float32)
+    filteredArray = np.where(rawArray > predict_limit, rawArray, -9999.0)
+
+    outDs.GetRasterBand(1).WriteArray(filteredArray)
+    outDs.GetRasterBand(1).SetNoDataValue(-9999.0)
     srsSpRef = ds.GetSpatialRef()
 
     outDs.SetProjection(srsSpRef.ExportToWkt())
@@ -306,7 +311,7 @@ def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_
         WKID = get_wkid_from_fld(oldImg)
         outJSON = os.path.join(OUT_PATH, rasterName + '.geojson')
         if not os.path.exists(outJSON):
-            polygonize_raster(outRaster, outJSON, WKID, False)
+            polygonize_raster(outRaster, outJSON, WKID)
 
         print("Project predict")
         outJSON_WGS = os.path.join(OUT_PATH_WGS, rasterName + '.geojson')

@@ -136,7 +136,7 @@ def check_rasters_list(inputList, targetResolution, wrapFld):
     return inputList
 
 
-def polygonize_raster(inRaster, outGeoJSON: str, WKID: int, binary: bool = True):
+def polygonize_raster(inRaster, outGeoJSON: str, WKID: int):
     #sourceRaster = gdal.Open(inRaster, gdal.GA_Update)
     #band = sourceRaster.GetRasterBand(1)
     #band.SetNoDataValue(0.0)  # For polygonize only clouds
@@ -154,10 +154,7 @@ def polygonize_raster(inRaster, outGeoJSON: str, WKID: int, binary: bool = True)
         driver.DeleteDataSource(outGeoJSON)
     outDatasource = driver.CreateDataSource(outGeoJSON)
     outLayer = outDatasource.CreateLayer("mask", srs=sr)
-    if binary:
-        gdal.Polygonize(band, band, outLayer, -1, [], callback=None)
-    else:
-        gdal.Polygonize(band, None, outLayer, -1, [], callback=None)
+    gdal.Polygonize(band, band, outLayer, -1, [], callback=None)
     outDatasource.Destroy()
     sourceRaster = None
 
