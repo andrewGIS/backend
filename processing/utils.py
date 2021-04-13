@@ -3,6 +3,13 @@ import gdal
 import glob
 import ogr
 import osr
+import io
+from PIL import Image
+import base64
+
+#TODO make config in one file
+IMG_FLD = os.path.normpath('./data/aviable_images')  # relative from main.py
+TEMP_PARTS_FLD = os.path.normpath("./processing/temp/img_parts")
 
 
 def get_raster_size(rasterPath):
@@ -225,3 +232,44 @@ def get_wkid_from_fld(inFldPath:str)-> int:
     fldName = os.path.basename(inFldPath)
     tileID = fldName.split('_')[5]
     return 32600 + int(tileID[1:3])
+
+
+def get_subset_from_image(inFldName: str, channelName: str,
+                          xmin: float, xmax: float, ymin: float, ymax:float) -> str:
+    rasterPath = get_raster_path(inFldName, channelName, IMG_FLD)
+    WKID = get_wkid_from_fld(inFldName)
+
+    # input SpatialReference
+    inSpatialRef = osr.SpatialReference()
+    inSpatialRef.ImportFromEPSG(4326)
+
+    # output SpatialReference
+    outSpatialRef = osr.SpatialReference()
+    outSpatialRef.ImportFromEPSG(WKID)
+
+    # create the CoordinateTransformation
+    coordTrans = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
+
+    #bottomLeft = ogr.CreateGeometryFromWkt(f"POINT ({xmin} {ymin})")
+    bottomLeft = ogr.CreateGeometryFromWkt(f"POINT ({ymin} {xmin})")
+    #upperRight = ogr.CreateGeometryFromWkt(f"POINT ({xmax} {ymax})")
+    upperRight = ogr.CreateGeometryFromWkt(f"POINT ({ymax} {xmax})")
+
+    bottomLeft.Transform(coordTrans)
+    upperRight.Transform(coordTrans)
+
+    opts = gdal.WarpOptions(
+        outputBounds=[
+            bottomLeft.GetX(),  # xmin
+            bottomLeft.GetY(),  # ymin
+            upperRight.GetX(),  # xmax
+            upperRight.GetY()   # ymax
+        ],
+        outputType=gdal.GDT_Byte
+    )
+
+    outImg = os.path.join(TEMP_PARTS_FLD, f'{inFldName}.bmp')
+    result = gdal.Warp(outImg, rasterPath, options=opts)
+    result = None
+
+    return outImg
