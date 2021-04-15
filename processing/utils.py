@@ -234,6 +234,13 @@ def get_wkid_from_fld(inFldPath:str)-> int:
     return 32600 + int(tileID[1:3])
 
 
+def get_pixel_type(rasterPath):
+    """
+    Get raster type of pixel by first band (used type in my app 'UInt16', 'Byte')
+    """
+    infoOptions = gdal.InfoOptions(format='json')
+    return gdal.Info(rasterPath, options=infoOptions)['bands'][0]['type']
+
 def get_subset_from_image(inFldName: str, channelName: str,
                           xmin: float, xmax: float, ymin: float, ymax:float) -> str:
     rasterPath = get_raster_path(inFldName, channelName, IMG_FLD)
@@ -258,18 +265,65 @@ def get_subset_from_image(inFldName: str, channelName: str,
     bottomLeft.Transform(coordTrans)
     upperRight.Transform(coordTrans)
 
-    opts = gdal.WarpOptions(
-        outputBounds=[
-            bottomLeft.GetX(),  # xmin
-            bottomLeft.GetY(),  # ymin
-            upperRight.GetX(),  # xmax
-            upperRight.GetY()   # ymax
-        ],
-        outputType=gdal.GDT_Byte
-    )
-
     outImg = os.path.join(TEMP_PARTS_FLD, f'{inFldName}.bmp')
-    result = gdal.Warp(outImg, rasterPath, options=opts)
-    result = None
+
+    pixelType = get_pixel_type(rasterPath)
+    if pixelType == 'Byte':
+        optsWarp = gdal.WarpOptions(
+            outputBounds=[
+                bottomLeft.GetX(),  # xmin
+                bottomLeft.GetY(),  # ymin
+                upperRight.GetX(),  # xmax
+                upperRight.GetY()   # ymax
+            ],
+            outputType=gdal.GDT_Byte
+        )
+        result = gdal.Warp(outImg, rasterPath, options=optsWarp)
+        result = None
+
+    if pixelType == 'UInt16':
+        # For display in bmp need to scale value
+        # Translate projWin not working coordinates in Wrap
+        tempTif = outImg.replace('.bmp', '.tif')
+        optsWarp = gdal.WarpOptions(
+            outputBounds=[
+                bottomLeft.GetX(),  # xmin
+                bottomLeft.GetY(),  # ymin
+                upperRight.GetX(),  # xmax
+                upperRight.GetY()  # ymax
+            ],
+            outputType=gdal.GDT_UInt16
+        )
+        result = gdal.Warp(tempTif, rasterPath, options=optsWarp)
+        result = None
+
+        ds = gdal.Open(tempTif)
+        band = ds.GetRasterBand(1)
+        # maxValue = band.GetMaximum()
+        # minValue = band.GetMinimum()
+        minValue, maxValue = band.ComputeRasterMinMax()
+        # return jsonify({'test': 'test'})
+        optsTranslate = gdal.TranslateOptions(
+            outputBounds=[
+                bottomLeft.GetX(),  # xmin
+                bottomLeft.GetY(),  # ymin
+                upperRight.GetX(),  # xmax
+                upperRight.GetY()  # ymax
+            ],
+            scaleParams=[[0, maxValue, 0, 255]],
+            outputType=gdal.GDT_Byte
+        )
+        result = gdal.Translate(outImg, tempTif, options=optsTranslate)
+        band = None
+        ds = None
+        result = None
 
     return outImg
+
+
+
+
+
+
+
+
