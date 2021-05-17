@@ -36,3 +36,5 @@ def make_predict():
     xmin, xmax, ymin, ymax = float(xmin), float(xmax), float(ymin), float(ymax)
     out_file = get_subset_from_image(imgFld, channel, xmin, xmax, ymin, ymax)
     return send_file(out_file, mimetype='image/bmp')
+    # file_name = os.path.basename(out_file)
+    # return send_from_directory(TEMP_PARTS_FLD, file_name, mimetype='image/bmp')

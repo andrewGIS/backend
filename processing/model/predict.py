@@ -1,19 +1,22 @@
-import osr
+#import osr
+from osgeo import osr
 from typing import List
 import glob
 import datetime
-from flask import jsonify
 from tensorflow import keras
-# from osgeo import gdal_array
 from skimage import io
-import subprocess
-import ogr
+# import ogr
+from osgeo import ogr
+from tasks import celery
 
-import gdal
+#import gdal
+from osgeo import gdal
 import os
 import numpy as np
 
 from ..clouds.make_cloud_mask import process_pipeline
+
+import config
 
 from ..utils import (
     get_raster_size,
@@ -28,16 +31,16 @@ from ..utils import (
     get_wkid_from_fld
 )
 
-TEMP_WARP_FLD = os.path.normpath("./processing/temp/warp")
-TEMP_STACK_FLD = os.path.normpath("./processing/temp/stack")
-TEMP_TILES_FLD = os.path.normpath("./processing/temp/tiles")
-TEMP_PREDICT_FLD = os.path.normpath("./processing/temp/predicts")
-STATIC_FLD = os.path.normpath("./static")
-IMG_FLD = os.path.normpath('./data/aviable_images')  # relative from main.py
-OUT_PATH = os.path.normpath('./data/aviable_predicts/project')
-OUT_PATH_WGS = os.path.normpath('./data/aviable_predicts/WGS84')
-OUT_CLOUD_FLD = os.path.normpath('./data/aviable_cloud_masks/project')
-OUT_FILTERED = os.path.normpath('./data/aviable_predicts/filtered')
+TEMP_WARP_FLD = config.TEMP_WARP_FLD
+TEMP_STACK_FLD = config.TEMP_STACK_FLD
+TEMP_TILES_FLD = config.TEMP_TILES_FLD
+TEMP_PREDICT_FLD = config.TEMP_PREDICT_FLD
+STATIC_FLD = config.STATIC_FLD
+IMG_FLD = config.IMG_FLD
+OUT_PATH = config.OUT_PREDICT_FLD
+OUT_PATH_WGS = config.OUT_PREDICT_FLD_WGS
+OUT_CLOUD_FLD = config.OUT_CLOUD_FLD
+OUT_FILTERED = config.OUT_PREDICT_FLD_FILTERED
 
 
 def stack_layers(sampleFld: str,
@@ -299,6 +302,8 @@ def erase(in_layer, erase_layers: List, out_ds, WKID):
     outDataSource.Destroy()
     srcDs = None
 
+
+# @celery.task()
 def predict_pipeline(oldImg, newImg, warpFolder=TEMP_WARP_FLD, stackFolder=TEMP_STACK_FLD, resolution=10):
     # s2 bands
     # ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B10","B11","B12"]

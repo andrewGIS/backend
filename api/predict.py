@@ -1,6 +1,7 @@
 from flask import Blueprint
 from flask import json, jsonify, request
 import os
+from tasks import celery
 
 from processing.model.predict import predict_pipeline
 
@@ -35,7 +36,18 @@ def make_predict():
     if not exists(oldPath) or not exists(newPath):
         return jsonify({'Error': 'Some folder not exists'})
 
+    #task = predict_pipeline(oldImg, newImg).delay()
     predict_pipeline(oldImg, newImg)
 
-    # return jsonify({'firstImg': firstImg, 'secondImg': secondImg})
-    return "ok"
+    #return jsonify({'firstImg': firstImg, 'secondImg': secondImg})
+    return jsonify('ok')
+    #return jsonify({'task_id': task.id})
+
+
+@api.route('/predict_status', methods=['GET'])
+def predict_status():
+    task_id = request.args.get('task_id', None)
+    if not task_id:
+        return jsonify({'Error': 'Task id is not set'})
+    task = celery.AsyncResult(task_id)
+    return jsonify(task.result)

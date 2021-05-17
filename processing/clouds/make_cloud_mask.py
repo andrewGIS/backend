@@ -1,19 +1,20 @@
 import numpy as np
-import gdal
+#import gdal
+from osgeo import gdal
 import os
 import glob
-import osr
+#import osr
+from osgeo import osr
 
-from flask import current_app
+
+import config
 
 from processing.utils import polygonize_raster, reproject_geojson, get_wkid_from_fld
 
-TEMP_FLD = os.path.normpath("./processing/temp")
-OUT_FLD_WGS = os.path.normpath('./data/aviable_cloud_masks/WGS84')
-OUT_FLD = os.path.normpath('./data/aviable_cloud_masks/project')
-IMG_FLD = os.path.normpath('./data/aviable_images') # relative from main.py
-
-#current_app.logger.info(TEMP_FLD)
+TEMP_FLD = config.TEMP_FLD
+OUT_FLD_WGS = config.OUT_CLOUD_FLD_WGS
+OUT_FLD = config.OUT_CLOUD_FLD
+IMG_FLD = config.IMG_FLD
 
 def s2to_numpy_stack(in_fld: str,
                    out_resolution=60,

@@ -1,7 +1,7 @@
 import os
 from flask import jsonify
 import json
-from flask import Blueprint
+from flask import Blueprint, current_app
 
 from processing.clouds.make_cloud_mask import process_pipeline
 
@@ -10,7 +10,8 @@ api = Blueprint('cloud', __name__)
 
 @api.route('/makecloudmask/<foldername>', methods=['GET'])
 def run_process(foldername):
-    process_pipeline(foldername)
+    print(current_app.config)
+    #process_pipeline(foldername)
     return "ok"
 
 

@@ -1,15 +1,17 @@
 import os
-import gdal
+#import gdal
+from osgeo import gdal
 import glob
-import ogr
-import osr
-import io
-from PIL import Image
-import base64
+#import ogr
+from osgeo import ogr
+#import osr
+from osgeo import osr
 
-#TODO make config in one file
-IMG_FLD = os.path.normpath('./data/aviable_images')  # relative from main.py
-TEMP_PARTS_FLD = os.path.normpath("./processing/temp/img_parts")
+import config
+
+
+IMG_FLD = config.IMG_FLD  # relative from app.py
+TEMP_PARTS_FLD = config.TEMP_PARTS_FLD
 
 
 def get_raster_size(rasterPath):
@@ -92,6 +94,8 @@ def raster2tile(inRaster, outFolder, tileSize=512):
 
     if not os.path.exists(outFolder):
         os.mkdir(outFolder)
+
+    # TODO Check this path
 
     print(" ".join([
         '"/home/gis/anaconda3/envs/geoTools/bin/python"',
