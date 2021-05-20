@@ -17,7 +17,10 @@ def get_predicts():
 def get_predict(predict):
     print(predict)
 
-    with open(f'./data/aviable_predicts/WGS84/{predict}') as f:
+    # with open(f'./data/aviable_predicts/WGS84/{predict}') as f:
+    #      data = json.load(f)
+
+    with open(f'./data/aviable_predicts/filtered/{predict}') as f:
          data = json.load(f)
     return data
 

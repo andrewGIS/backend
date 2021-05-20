@@ -1,16 +1,20 @@
-#import osr
-from osgeo import osr
+
 from typing import List
 import glob
 import datetime
 from tensorflow import keras
 from skimage import io
-# import ogr
-from osgeo import ogr
-from tasks import celery
 
-#import gdal
-from osgeo import gdal
+# TODO install 3.3.0 gdal version
+try:
+    from osgeo import osr
+    from osgeo import ogr
+    from osgeo import gdal
+except ImportError:
+    import osr
+    import ogr
+    import gdal
+
 import os
 import numpy as np
 
@@ -280,17 +284,36 @@ def erase(in_layer, erase_layers: List, out_ds, WKID):
     outLayer: ogr.Layer = outDataSource.CreateLayer('predict', geom_type=ogr.wkbMultiPolygon, srs=outSpatialRef)
 
     for feature in srcLayer:
+        needDestroy = False
         feature_out: ogr.Feature = ogr.Feature(outLayer.GetLayerDefn())
         feature_out.SetGeometry(feature.GetGeometryRef())
         for erase_layer in erase_layers:
             erDs = ogr.Open(erase_layer)
             eLayer = erDs.GetLayer()
             for f1 in eLayer:
-                eraseGeom = f1.GetGeometryRef()
+                eraseGeom: ogr.Geometry = f1.GetGeometryRef()
+                #TODO check it
+                if not f1:
+                    continue
+                if eraseGeom.Contains(feature_out.geometry()):
+                    needDestroy = True
+                    break
+
                 erased: ogr.Geometry = feature_out.GetGeometryRef().Difference(eraseGeom)
+                #erased: ogr.Geometry = feature_out.geometry().MakeValid().Difference(eraseGeom)
+
+                # TODO check it
+                if not erased:
+                    continue
                 feature_out.SetGeometry(erased)
             erDs = None
             eLayer = None
+
+        # if predict object inside cloud
+        if needDestroy:
+            feature_out.Destroy()
+            continue
+
         feature_out.GetGeometryRef().Transform(coordTrans)
         feature_out.GetGeometryRef().SwapXY()
         if feature_out.GetGeometryRef().IsEmpty():

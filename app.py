@@ -17,6 +17,7 @@ logging.basicConfig(level=logging.DEBUG,
 logger = logging.getLogger()
 
 def create_app():
+
     logger.info(f'Starting app in {config.APP_ENV} environment')
 
     app = Flask(__name__)
@@ -37,4 +38,4 @@ def create_app():
 
 if __name__ == '__main__':
     app = create_app()
-    app.run(debug=True, usereloader=True)
+    app.run(debug=True)
