@@ -10,8 +10,10 @@ api = Blueprint('predict', __name__)
 
 @api.route('/predicts', methods=['GET'])
 def get_predicts():
-    return jsonify({"predicts": os.listdir('./data/aviable_predicts/WGS84')})
-
+    # return jsonify({"predicts": os.listdir('./data/aviable_predicts/WGS84')})
+    
+    # cloud filtered data
+    return jsonify({"predicts": os.listdir('./data/aviable_predicts/filtered')})
 
 @api.route('/predict/<predict>', methods=['GET'])
 def get_predict(predict):
@@ -20,6 +22,7 @@ def get_predict(predict):
     # with open(f'./data/aviable_predicts/WGS84/{predict}') as f:
     #      data = json.load(f)
 
+    # cloud filtered data
     with open(f'./data/aviable_predicts/filtered/{predict}') as f:
          data = json.load(f)
     return data
