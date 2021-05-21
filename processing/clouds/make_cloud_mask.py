@@ -1,10 +1,14 @@
 import numpy as np
-#import gdal
-from osgeo import gdal
+# TODO install 3.3.0 gdal version
+try:
+    from osgeo import gdal
+    from osgeo import osr
+except ImportError:
+    import gdal
+    import osr
 import os
 import glob
-#import osr
-from osgeo import osr
+
 
 
 import config
