@@ -10,8 +10,8 @@ api = Blueprint('cloud', __name__)
 
 @api.route('/makecloudmask/<foldername>', methods=['GET'])
 def run_process(foldername):
-    print(current_app.config)
-    #process_pipeline(foldername)
+    #print(current_app.config)
+    process_pipeline(foldername)
     return "ok"
 
 

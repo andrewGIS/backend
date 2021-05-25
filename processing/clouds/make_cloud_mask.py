@@ -9,11 +9,15 @@ except ImportError:
 import os
 import glob
 
-
-
 import config
 
-from processing.utils import polygonize_raster, reproject_geojson, get_wkid_from_fld
+from processing.utils import (
+    polygonize_raster,
+    reproject_geojson,
+    get_wkid_from_fld,
+    get_raster_path,
+    get_raster_resolution
+)
 
 TEMP_FLD = config.TEMP_FLD
 OUT_FLD_WGS = config.OUT_CLOUD_FLD_WGS
@@ -42,7 +46,9 @@ def s2to_numpy_stack(in_fld: str,
     # order 3 rd dimension
     order = ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B10", "B11", "B12"]
 
-    filenames = list(glob.glob(os.path.join(IMG_FLD, in_fld, r"GRANULE\**\IMG_DATA\*B*.jp2")))
+    # get all bands for cloud filtering
+    mask = os.path.normpath(r"GRANULE/**/IMG_DATA/*B*.jp2")
+    filenames = list(glob.glob(os.path.join(IMG_FLD, in_fld, mask)))
 
     # get order index based on position in order list from filename
     filenames.sort(key=lambda x: order.index(x.split('_')[-1][:3]))
@@ -51,7 +57,8 @@ def s2to_numpy_stack(in_fld: str,
         print(filename)
         ds = gdal.Open(filename)
         band = ds.GetRasterBand(1)
-        if ds.GetGeoTransform()[1] != out_resolution:
+        rasterResolution = get_raster_resolution(filename)
+        if rasterResolution != out_resolution:
             print(ds.GetGeoTransform()[1])
             tempRaster = os.path.join(temp_fld, "tempRaster.tif")
             gdal.Warp(tempRaster, filename, options=opts)
@@ -117,8 +124,10 @@ def process_pipeline(inFld):
     print("Predicting cloud")
     WKID = get_wkid_from_fld(inFld)
     # # raster with 60 resolution
-    template = list(glob.glob(os.path.join(IMG_FLD, inFld, r"GRANULE\**\IMG_DATA\*B01.jp2")))[0]
-    outRaster = os.path.join(TEMP_FLD, 'tempRaster.tif')
+    template = get_raster_path(inFld, "B01", IMG_FLD)
+    outRaster = os.path.join(TEMP_FLD, 'outCloudPredict.tif')
+    if os.path.exists(outRaster):
+        os.remove(outRaster)
     make_and_write_predict(array_to_predict, outRaster, WKID=WKID, templateRasterPath=template)
 
     print("Polygonize")
