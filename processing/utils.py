@@ -261,6 +261,8 @@ def get_subset_from_image(inFldName: str, channelName: str,
     # create the CoordinateTransformation
     coordTrans = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
 
+
+    # TODO Why need swap??
     #bottomLeft = ogr.CreateGeometryFromWkt(f"POINT ({xmin} {ymin})")
     bottomLeft = ogr.CreateGeometryFromWkt(f"POINT ({ymin} {xmin})")
     #upperRight = ogr.CreateGeometryFromWkt(f"POINT ({xmax} {ymax})")

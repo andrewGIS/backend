@@ -1,0 +1,5 @@
+*venv
+./data
+*.idea
+/data/
+/processing/temp/

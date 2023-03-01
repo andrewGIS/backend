@@ -1,0 +1,6 @@
+venv
+data
+processing/temp
+.idea
+__*
+.git

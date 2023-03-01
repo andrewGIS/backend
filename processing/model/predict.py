@@ -96,6 +96,7 @@ def stack_layers(sampleFld: str,
     out_source.SetGeoTransform((x_min, cellsize, 0, y_max, 0, -cellsize))
     out_source.SetProjection(get_raster_projection(newList[0]))
 
+    # TODO refactor this make more simpler
     idx_map = [
         [1, 2],  # B04
         # [new channel index, old channel index, new - old dif index, old - new dif index]
@@ -230,6 +231,7 @@ def predict_folder(
             b12new = arr[:, :, 6]
             b12old = arr[:, :, 7]
 
+            # TODO check features order and calculation
             toPredict = np.array(
                 np.dstack([
                     b4new,
